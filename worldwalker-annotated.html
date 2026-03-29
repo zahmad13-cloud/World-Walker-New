@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<!-- Tells the browser this is a modern HTML5 document -->
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<!-- Makes the page scale correctly on phones and tablets -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>WorldWalker — AI World Explorer</title>
+
+<!-- Loads two fonts from Google:
+     Syne = the bold display font used for headings and buttons
+     Syne Mono = the monospace font used for labels, HUD text, compass -->
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=Syne+Mono&display=swap" rel="stylesheet"/>
+
+<style>
+/* Reset: strips default browser spacing from every element */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+/* CSS Variables — named colors used everywhere below.
+   Change a value here and it updates across the whole page. */
+:root{
+  --bg:#08090c;        /* Nearly black — main background */
+  --card:#0f1117;      /* Dark card background */
+  --border:#1c2030;    /* Subtle blue-grey border color */
+  --accent:#e8ff47;    /* Bright yellow-green — highlight color */
+  --accent2:#ff6b35;   /* Orange — used for errors and exit hover */
+  --text:#f0f2f8;      /* Off-white — readable body text */
+  --muted:#555e7a;     /* Grey-blue — secondary/dimmed text */
+}
+
+/* Base page: dark background, full height, no scrollbar */
+body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;height:100vh;overflow:hidden}
+
+
+/* ════════════════════════════════════
+   SETUP SCREEN — the first thing you see
+   ════════════════════════════════════ */
+
+/* Covers the full screen, centers content, sits on top (z-index:100) */
+#setup{
+  position:fixed;inset:0;z-index:100;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--bg);
+}
+
+/* Decorative yellow-green glow at the top of the setup screen */
+#setup::before{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(ellipse 80% 60% at 50% 0%, rgba(232,255,71,0.06) 0%, transparent 70%);
+  pointer-events:none; /* Clicks pass through this decorative layer */
+}
+
+/* The inner card that holds all the setup form elements.
+   Max width 560px so it doesn't stretch too wide on large screens. */
+.setup-inner{
+  position:relative;width:100%;max-width:560px;padding:24px;
+  animation:riseIn 0.7s ease both; /* Slides up from below on page load */
+}
+
+/* Big "WORLD WALKER" title — gradient goes white → yellow-green */
+.logo{
+  font-size:64px;font-weight:800;letter-spacing:-0.03em;line-height:1;
+  margin-bottom:8px;
+  background:linear-gradient(135deg, #fff 0%, var(--accent) 60%);
+  /* These three lines together make the gradient show through the text */
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+
+/* Subtitle text below the title */
+.tagline{color:var(--muted);font-size:14px;margin-bottom:40px;letter-spacing:0.05em;}
+
+/* Small uppercase label above each input field */
+.field-label{
+  font-family:'Syne Mono',monospace;font-size:10px;letter-spacing:0.18em;
+  text-transform:uppercase;color:var(--muted);margin-bottom:8px;display:block;
+}
+
+/* Shared styles for the API key input and the world description textarea */
+input[type=password],textarea{
+  width:100%;background:#0a0c12;border:1px solid var(--border);
+  border-radius:10px;color:var(--text);font-family:'Syne',sans-serif;
+  font-size:14px;padding:14px 16px;outline:none;
+  transition:border-color 0.2s,box-shadow 0.2s; /* Smooth focus animation */
+  margin-bottom:20px;
+}
+/* Textarea-specific: fixed height, no resizing, comfortable line spacing */
+textarea{resize:none;height:100px;line-height:1.6;}
+
+/* Yellow-green glow border when you click into a field */
+input[type=password]:focus,textarea:focus{
+  border-color:var(--accent);box-shadow:0 0 0 3px rgba(232,255,71,0.08);
+}
+
+/* Row of clickable preset world chips */
+.world-presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;}
+
+/* Individual preset chip button */
+.preset{
+  background:#0a0c12;border:1px solid var(--border);border-radius:8px;
+  padding:7px 13px;font-size:12px;color:var(--muted);cursor:pointer;
+  transition:all 0.15s;font-family:'Syne Mono',monospace;
+}
+/* Highlight on hover */
+.preset:hover{border-color:var(--accent);color:var(--accent);}
+
+/* The main "ENTER WORLD" button */
+.start-btn{
+  width:100%;background:var(--accent);border:none;border-radius:10px;
+  color:#000;font-family:'Syne',sans-serif;font-weight:800;
+  font-size:18px;letter-spacing:0.05em;padding:16px;cursor:pointer;
+  transition:all 0.2s;
+}
+/* Lifts up with a glow on hover (only when not disabled) */
+.start-btn:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 32px rgba(232,255,71,0.25);}
+/* Dims when disabled (during loading/generation) */
+.start-btn:disabled{opacity:0.4;cursor:not-allowed;}
+
+/* Error message box — hidden by default, shown with .show class */
+.err{
+  background:rgba(255,107,53,0.1);border:1px solid rgba(255,107,53,0.3);
+  border-radius:8px;padding:12px 16px;font-size:12px;color:var(--accent2);
+  font-family:'Syne Mono',monospace;margin-bottom:16px;display:none;
+}
+.err.show{display:block;}
+
+
+/* ════════════════════════════════════
+   LOADING SCREEN — shown while Marble generates the world
+   ════════════════════════════════════ */
+
+/* Full screen overlay, hidden by default, centered column layout */
+#loading{
+  position:fixed;inset:0;z-index:90;background:var(--bg);
+  display:none;flex-direction:column;align-items:center;justify-content:center;gap:24px;
+}
+/* Adding .show class makes it appear */
+#loading.show{display:flex;}
+
+/* "Generating your world" label at the top */
+.load-title{font-size:13px;font-family:'Syne Mono',monospace;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase;}
+
+/* Shows the world description the user typed */
+.load-world{font-size:28px;font-weight:800;text-align:center;max-width:400px;line-height:1.2;}
+
+/* Grey track the progress bar fills up inside */
+.load-bar-wrap{width:300px;height:3px;background:var(--border);border-radius:100px;overflow:hidden;}
+
+/* The actual yellow-green bar — width is set by JavaScript */
+.load-bar{height:100%;background:var(--accent);border-radius:100px;width:0%;transition:width 1.2s ease;}
+
+/* Status text below the bar e.g. "Sculpting landscape..." */
+.load-status{font-size:11px;font-family:'Syne Mono',monospace;color:var(--muted);}
+
+
+/* ════════════════════════════════════
+   GAME CANVAS — the Three.js 3D viewport
+   ════════════════════════════════════ */
+
+/* Hidden until the game starts. cursor:none hides the mouse cursor
+   since we use a custom crosshair in the HUD instead */
+#gameCanvas{
+  position:fixed;inset:0;display:none;cursor:none;
+}
+#gameCanvas.show{display:block;}
+
+
+/* ════════════════════════════════════
+   HUD (Heads-Up Display) — the overlay on top of the 3D game
+   ════════════════════════════════════ */
+
+/* Covers full screen, pointer-events:none means clicks pass through
+   to the canvas below (except for elements that override this) */
+#hud{
+  position:fixed;inset:0;pointer-events:none;z-index:10;display:none;
+}
+#hud.show{display:block;}
+
+/* Crosshair in the center of the screen.
+   Made with CSS ::before (vertical line) and ::after (horizontal line) */
+.crosshair{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:16px;height:16px;
+}
+.crosshair::before,.crosshair::after{
+  content:'';position:absolute;background:rgba(255,255,255,0.7);border-radius:1px;
+}
+.crosshair::before{width:2px;height:100%;left:50%;transform:translateX(-50%);} /* Vertical bar */
+.crosshair::after{width:100%;height:2px;top:50%;transform:translateY(-50%);}   /* Horizontal bar */
+
+/* World description shown at the top-center of the screen during gameplay */
+.world-name-hud{
+  position:absolute;top:24px;left:50%;transform:translateX(-50%);
+  font-size:11px;font-family:'Syne Mono',monospace;letter-spacing:0.15em;
+  text-transform:uppercase;color:rgba(255,255,255,0.4);
+  text-align:center;
+}
+
+/* WASD/Mouse/ESC hint shown at the bottom of the screen */
+.controls-hint{
+  position:absolute;bottom:28px;left:50%;transform:translateX(-50%);
+  display:flex;gap:16px;align-items:center;
+  font-size:11px;font-family:'Syne Mono',monospace;color:rgba(255,255,255,0.3);
+  letter-spacing:0.08em;
+}
+/* Individual key labels styled to look like keyboard keys */
+.key{
+  background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);
+  border-radius:4px;padding:2px 7px;font-size:10px;
+}
+
+/* Compass in the top-right corner showing N/NE/E/SE/S/SW/W/NW */
+.compass{
+  position:absolute;top:24px;right:28px;
+  font-family:'Syne Mono',monospace;font-size:11px;
+  color:rgba(255,255,255,0.5);letter-spacing:0.1em;
+  display:flex;flex-direction:column;align-items:center;gap:2px;
+}
+/* The current direction letter — highlighted in yellow-green */
+.compass-dir{font-size:14px;font-weight:700;color:var(--accent);}
+
+/* Dark overlay shown before the player clicks to lock the mouse.
+   pointer-events:all means this one DOES capture clicks (unlike the HUD parent) */
+.click-overlay{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,0.6);pointer-events:all;cursor:pointer;
+  transition:opacity 0.3s;
+}
+/* Fades out and stops capturing clicks once the mouse is locked */
+.click-overlay.hide{opacity:0;pointer-events:none;}
+
+/* "CLICK TO EXPLORE" text in the center of the overlay */
+.click-msg{
+  text-align:center;
+  font-size:22px;font-weight:800;letter-spacing:0.05em;
+}
+.click-sub{font-size:13px;font-family:'Syne Mono',monospace;color:var(--muted);margin-top:8px;letter-spacing:0.1em;}
+
+/* "← EXIT" button in the top-left — pointer-events:all so it's clickable */
+.exit-btn{
+  position:absolute;top:20px;left:20px;
+  background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.15);
+  border-radius:8px;padding:8px 14px;font-size:11px;font-family:'Syne Mono',monospace;
+  color:rgba(255,255,255,0.5);cursor:pointer;pointer-events:all;
+  letter-spacing:0.08em;transition:all 0.2s;
+}
+.exit-btn:hover{border-color:var(--accent2);color:var(--accent2);}
+
+/* Vignette: darkens the screen edges to create depth and cinematic feel */
+.vignette{
+  position:absolute;inset:0;
+  background:radial-gradient(ellipse 70% 70% at 50% 50%, transparent 40%, rgba(0,0,0,0.5) 100%);
+  pointer-events:none;
+}
+
+/* ── Animations ── */
+
+/* Slides up from below and fades in — used on the setup card */
+@keyframes riseIn{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:translateY(0)}}
+/* Simple fade in */
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════
+     SETUP SCREEN HTML
+     This is the first screen — API key + world description
+     ═══════════════════════════════════════ -->
+<div id="setup">
+  <div class="setup-inner">
+    <!-- Big title -->
+    <div class="logo">WORLD<br>WALKER</div>
+    <div class="tagline">Generate a world. Step inside. Explore in first person.</div>
+
+    <!-- API key field — type=password hides the characters for security -->
+    <label class="field-label">Marble API Key</label>
+    <input type="password" id="apiKey" placeholder="Paste your WLT-Api-Key..."/>
+
+    <!-- World description field -->
+    <label class="field-label">Describe your world</label>
+
+    <!-- Preset chips — clicking one calls setP() which fills in the textarea -->
+    <div class="world-presets">
+      <span class="preset" onclick="setP('A dense foggy forest at night with glowing mushrooms and ancient stone paths')">🌲 Dark Forest</span>
+      <span class="preset" onclick="setP('A vast alien desert with twin moons, purple sand dunes, and ruined spacecraft')">🪐 Alien Desert</span>
+      <span class="preset" onclick="setP('An abandoned underwater research station with cracked glass and bioluminescent sea life')">🌊 Deep Sea Lab</span>
+      <span class="preset" onclick="setP('A floating sky island with waterfalls cascading into clouds and ancient ruins')">☁️ Sky Island</span>
+      <span class="preset" onclick="setP('A neon-lit cyberpunk alleyway at night with rain puddles and holographic signs')">🌆 Cyberpunk Alley</span>
+    </div>
+
+    <!-- The main text area for typing a custom world description -->
+    <textarea id="prompt" placeholder="A misty mountain valley at dawn with cherry blossom trees and a flowing river..."></textarea>
+
+    <!-- Error box — hidden until showErr() is called -->
+    <div class="err" id="err"></div>
+
+    <!-- Main button — calls startGame() when clicked -->
+    <button class="start-btn" id="startBtn" onclick="startGame()">ENTER WORLD →</button>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     LOADING SCREEN HTML
+     Shown while waiting for Marble to generate the world
+     ═══════════════════════════════════════ -->
+<div id="loading">
+  <div class="load-title">Generating your world</div>
+  <!-- Shows the user's world description while they wait -->
+  <div class="load-world" id="loadWorldName"></div>
+  <!-- Progress bar: the inner div's width is updated by JavaScript -->
+  <div class="load-bar-wrap"><div class="load-bar" id="loadBar"></div></div>
+  <!-- Status message e.g. "Sculpting landscape..." -->
+  <div class="load-status" id="loadStatus">Sending to Marble AI...</div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     GAME HTML
+     The canvas is where Three.js draws the 3D world.
+     The HUD is the overlay on top (crosshair, compass, etc.)
+     ═══════════════════════════════════════ -->
+
+<!-- Three.js renders the 3D scene onto this canvas element -->
+<canvas id="gameCanvas"></canvas>
+
+<!-- HUD: sits on top of the canvas -->
+<div id="hud">
+  <!-- Darkens screen edges for atmosphere -->
+  <div class="vignette"></div>
+
+  <!-- Crosshair dot in the screen center -->
+  <div class="crosshair"></div>
+
+  <!-- World name shown at top of screen during gameplay -->
+  <div class="world-name-hud" id="worldNameHud"></div>
+
+  <!-- Compass in top-right — direction updated by JavaScript -->
+  <div class="compass">
+    <div class="compass-dir" id="compassDir">N</div>
+    <div>↑</div>
+  </div>
+
+  <!-- WASD controls reminder at the bottom -->
+  <div class="controls-hint">
+    <span><span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span> Move</span>
+    <span>Mouse Look</span>
+    <span><span class="key">ESC</span> Exit</span>
+  </div>
+
+  <!-- Overlay shown before mouse is locked — clicking it calls lockPointer() -->
+  <div class="click-overlay" id="clickOverlay" onclick="lockPointer()">
+    <div>
+      <div class="click-msg">CLICK TO EXPLORE</div>
+      <div class="click-sub">Your world is ready</div>
+    </div>
+  </div>
+
+  <!-- Exit button — always visible during gameplay -->
+  <button class="exit-btn" onclick="exitGame()">← EXIT</button>
+</div>
+
+
+<!-- Three.js library loaded from CDN (no install needed) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  GLOBAL STATE VARIABLES
+//  These are shared across all functions below
+// ═══════════════════════════════════════════════════════
+
+let scene, camera, renderer, animId;
+// scene    = the Three.js container that holds all 3D objects
+// camera   = the player's viewpoint (first person)
+// renderer = draws the scene onto the canvas every frame
+// animId   = ID of the animation loop (used to cancel it on exit)
+
+let moveF=false, moveB=false, moveL=false, moveR=false;
+// Boolean flags for which direction keys are held down
+// moveF=Forward, moveB=Backward, moveL=Left, moveR=Right
+
+let yaw=0, pitch=0;
+// yaw   = left/right camera rotation (controlled by mouse X movement)
+// pitch = up/down camera rotation (controlled by mouse Y movement)
+
+let isLocked=false;
+// true when the browser has locked the mouse cursor to the game canvas
+// Mouse look only works when isLocked is true
+
+let worldData=null;
+// Stores the response from the Marble API after generation completes
+
+let pollTimer=null;
+// Stores the setInterval ID for the polling loop
+// We save it so we can stop polling with clearInterval() later
+
+let elapsed=0;
+// Tracks how many seconds have passed since generation started
+
+
+// ═══════════════════════════════════════════════════════
+//  UTILITY FUNCTIONS
+// ═══════════════════════════════════════════════════════
+
+// Fills the textarea with a preset world description when user clicks a chip
+function setP(t){ document.getElementById('prompt').value=t; }
+
+// Shows a red error message in the error box
+function showErr(m){
+  const e=document.getElementById('err');
+  e.textContent='⚠ '+m;
+  e.classList.add('show'); // Makes the hidden div visible
+}
+
+// Hides the error box
+function hideErr(){ document.getElementById('err').classList.remove('show'); }
+
+// Updates the loading screen's progress bar and status text
+// pct = 0-100 percentage, status = the message string to show
+function setLoad(pct, status){
+  document.getElementById('loadBar').style.width=pct+'%';
+  document.getElementById('loadStatus').textContent=status;
+}
+
+// Converts the camera's yaw angle (in radians) to a compass direction string
+// yaw is in radians so we convert to degrees first, then map to 8 directions
+function getCompassDir(yaw){
+  const deg = ((yaw * 180/Math.PI) % 360 + 360) % 360;
+  if(deg<22.5||deg>=337.5) return 'N';
+  if(deg<67.5)  return 'NE';
+  if(deg<112.5) return 'E';
+  if(deg<157.5) return 'SE';
+  if(deg<202.5) return 'S';
+  if(deg<247.5) return 'SW';
+  if(deg<292.5) return 'W';
+  return 'NW';
+}
+
+
+// ═══════════════════════════════════════════════════════
+//  GAME START FLOW
+//  Called when user clicks "ENTER WORLD"
+// ═══════════════════════════════════════════════════════
+async function startGame(){
+  // Read values from the input fields
+  const apiKey = document.getElementById('apiKey').value.trim();
+  const prompt = document.getElementById('prompt').value.trim();
+  hideErr();
+
+  // Validate — don't proceed if either field is empty
+  if(!apiKey) return showErr('Please enter your Marble API key.');
+  if(!prompt) return showErr('Please describe your world.');
+
+  // Disable the button so they can't click again while loading
+  document.getElementById('startBtn').disabled=true;
+
+  // Hide setup screen, show loading screen
+  document.getElementById('setup').style.display='none';
+  const loadEl = document.getElementById('loading');
+  loadEl.classList.add('show');
+
+  // Show the user's description while they wait
+  document.getElementById('loadWorldName').textContent='"'+prompt.slice(0,60)+(prompt.length>60?'...':'')+'"';
+  setLoad(5,'Contacting Marble AI...');
+
+  try {
+    // ── STEP 1: POST to Marble API to kick off world generation ──
+    // This is like placing an order — it starts the job and gives us an ID
+    const res = await fetch('https://api.worldlabs.ai/marble/v1/worlds:generate',{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'WLT-Api-Key':apiKey  // Your API key authenticates the request
+      },
+      body:JSON.stringify({
+        display_name: prompt.slice(0,50),      // Name shown in Marble dashboard
+        model:'Marble 0.1-mini',               // Fast model (~30-45 seconds)
+        world_prompt:{type:'text', text_prompt:prompt}
+      })
+    });
+
+    // If the server returned an error status code, throw an error
+    if(!res.ok){
+      const e=await res.json().catch(()=>({}));
+      throw new Error(e.message||'API error '+res.status);
+    }
+
+    const data=await res.json();
+    const opId=data.operation_id; // The job ID we'll use to check progress
+    if(!opId) throw new Error('No operation ID returned.');
+
+    setLoad(15,'World queued — building terrain...');
+
+    // ── STEP 2: Poll every 5 seconds to check if generation is done ──
+    // We can't know exactly when it'll finish, so we keep asking
+    elapsed=0;
+    pollTimer=setInterval(async()=>{
+      elapsed+=5; // Add 5 seconds each tick
+
+      // Estimate a progress percentage based on time elapsed vs expected time (~90s)
+      const pct=Math.min(15+(elapsed/90)*70, 88); // Never goes above 88% until done
+
+      // Update the status message based on how long it's been
+      setLoad(pct,
+        elapsed<15?'Sculpting landscape...' :
+        elapsed<30?'Placing environment...' :
+        elapsed<50?'Adding atmosphere...' :
+        'Almost ready...'
+      );
+
+      try {
+        // Ask the API: "is this job done yet?"
+        const pr=await fetch(`https://api.worldlabs.ai/marble/v1/operations/${opId}`,{
+          headers:{'WLT-Api-Key':apiKey}
+        });
+        if(!pr.ok) return; // Skip this tick if the request failed
+
+        const op=await pr.json();
+
+        // If done is true and there's no error, the world is ready!
+        if(op.done && !op.error){
+          clearInterval(pollTimer); // Stop polling
+          setLoad(100,'World ready!');
+          worldData=op.response;
+
+          // Extract IDs and URLs from the response
+          const wId=op.metadata?.world_id||worldData?.id;
+          const thumb=worldData?.assets?.thumbnail_url;   // Preview image
+          const caption=worldData?.assets?.caption||prompt; // AI description
+          const marbleUrl=worldData?.world_marble_url||`https://marble.worldlabs.ai/world/${wId}`;
+
+          // Wait 600ms so user sees "100%" before the game launches
+          setTimeout(()=>launchGame(prompt, thumb, caption, marbleUrl), 600);
+        }
+
+        // If there's an error field in the response, something went wrong
+        if(op.error){ clearInterval(pollTimer); throw new Error('Generation failed.'); }
+
+      } catch(e){
+        // Ignore transient network errors — just keep polling
+        // Only real errors (from op.error) stop the loop
+      }
+    }, 5000); // Run every 5000 milliseconds = 5 seconds
+
+  } catch(err){
+    // Something went wrong — go back to setup screen and show the error
+    clearInterval(pollTimer);
+    loadEl.classList.remove('show');
+    document.getElementById('setup').style.display='flex';
+    document.getElementById('startBtn').disabled=false;
+    showErr(err.message);
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════
+//  LAUNCH THE GAME
+//  Called after world generation completes
+// ═══════════════════════════════════════════════════════
+function launchGame(prompt, thumbUrl, caption, marbleUrl){
+  // Hide loading screen, show canvas and HUD
+  document.getElementById('loading').classList.remove('show');
+  document.getElementById('gameCanvas').classList.add('show');
+  document.getElementById('hud').classList.add('show');
+
+  // Set the world name shown at the top of the HUD
+  document.getElementById('worldNameHud').textContent=prompt.slice(0,60)+(prompt.length>60?'...':'');
+
+  // Initialize the Three.js 3D engine
+  initThree(thumbUrl, caption, marbleUrl);
+}
+
+
+// ═══════════════════════════════════════════════════════
+//  THREE.JS SETUP
+//  Sets up the 3D renderer, scene, camera, and lights
+// ═══════════════════════════════════════════════════════
+function initThree(thumbUrl, caption, marbleUrl){
+  const canvas=document.getElementById('gameCanvas');
+
+  // Create the WebGL renderer — this is what actually draws 3D graphics
+  renderer=new THREE.WebGLRenderer({canvas, antialias:true}); // antialias=smoother edges
+  renderer.setSize(window.innerWidth,window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio,2)); // Crisp on retina screens
+  renderer.shadowMap.enabled=true; // Allow objects to cast/receive shadows
+
+  // Scene = the container for all 3D objects, lights, camera
+  scene=new THREE.Scene();
+
+  // Exponential fog — things far away fade into the background color
+  // 0x0a0d14 is the fog color (dark blue-black), 0.025 is how thick the fog is
+  scene.fog=new THREE.FogExp2(0x0a0d14, 0.025);
+  scene.background=new THREE.Color(0x0a0d14);
+
+  // If Marble gave us a thumbnail, use it as a 360° sky sphere
+  if(thumbUrl){
+    loadPanoramaBackground(thumbUrl);
+  }
+
+  // Build the ground and scatter trees/rocks/buildings based on the prompt
+  buildWorld(caption);
+
+  // Camera = the player's eyes in first person
+  // PerspectiveCamera(fov, aspect, near, far)
+  // fov=75 = field of view in degrees (wider = more peripheral vision)
+  camera=new THREE.PerspectiveCamera(75,window.innerWidth/window.innerHeight,0.1,500);
+  camera.position.set(0,1.7,0); // Start at eye height (1.7 units = ~5'7")
+
+  // Ambient light — fills the whole scene with soft blue-grey light
+  const ambient=new THREE.AmbientLight(0x334466,0.8);
+  scene.add(ambient);
+
+  // Directional light = like the sun — comes from one direction, casts shadows
+  const sun=new THREE.DirectionalLight(0xffd4a0,1.2); // Warm orange-white color
+  sun.position.set(50,80,30);
+  sun.castShadow=true;
+  scene.add(sun);
+
+  // Point light = like a light bulb — radiates in all directions from a point
+  // This one is a blue fill light on the left side for depth
+  const fill=new THREE.PointLight(0x4466ff,0.5,80); // color, intensity, range
+  fill.position.set(-20,10,-20);
+  scene.add(fill);
+
+  // Add the glowing portal that leads to the full Marble world
+  addMarblePortal(marbleUrl);
+
+  // Set up keyboard and mouse listeners
+  setupControls();
+
+  // Start the render loop
+  animate();
+
+  // Handle window resize
+  window.addEventListener('resize',onResize);
+}
+
+
+// ═══════════════════════════════════════════════════════
+//  BUILD THE PROCEDURAL WORLD
+//  Creates the ground and decides what objects to place
+//  based on keywords in the world description
+// ═══════════════════════════════════════════════════════
+function buildWorld(caption){
+  // Create a flat-ish ground plane
+  // PlaneGeometry(width, height, widthSegments, heightSegments)
+  // More segments = more vertices = can have hills/bumps
+  const groundGeo=new THREE.PlaneGeometry(200,200,40,40);
+  const pos=groundGeo.attributes.position; // Access the vertex positions
+
+  // Loop through every vertex and offset its Y position to create gentle hills
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), z=pos.getZ(i);
+    const dist=Math.sqrt(x*x+z*z); // Distance from center
+    // Overlapping sine waves create natural-looking undulation
+    const y=Math.sin(x*0.08)*Math.cos(z*0.08)*2 +
+             Math.sin(x*0.15+1)*0.8 +
+             Math.sin(z*0.12+2)*0.8;
+    pos.setY(i, dist<3?0:y); // Keep center flat so player doesn't spawn in a hill
+  }
+  groundGeo.computeVertexNormals(); // Recalculate normals after moving vertices
+
+  const groundMat=new THREE.MeshLambertMaterial({color:0x1a2a1a}); // Dark green ground
+  const ground=new THREE.Mesh(groundGeo,groundMat);
+  ground.rotation.x=-Math.PI/2; // Rotate flat — by default planes are vertical
+  ground.receiveShadow=true;
+  scene.add(ground);
+
+  // Scatter environment objects based on the world description
+  scatterObjects(caption);
+
+  // Add a path of stone tiles leading toward the portal
+  addPath();
+}
+
+// Detects keywords in the prompt and places matching objects
+function scatterObjects(caption){
+  const lc=caption.toLowerCase(); // Lowercase for easy comparison
+
+  // Check which type of world this is based on keywords
+  const isForest=lc.includes('forest')||lc.includes('tree')||lc.includes('jungle')||lc.includes('wood');
+  const isDesert=lc.includes('desert')||lc.includes('sand')||lc.includes('dune');
+  const isCity  =lc.includes('city')||lc.includes('urban')||lc.includes('building')||lc.includes('street');
+  const isOcean =lc.includes('ocean')||lc.includes('water')||lc.includes('sea')||lc.includes('lake');
+
+  // Place different objects depending on world type
+  if(isCity){
+    addBuildings();               // Tall box buildings with window lights
+  } else if(isDesert){
+    addRocks(30, 0x8b7355, 0.5,3); // Sandy-colored rocks
+    addTallRocks(15);              // Mesa-style tall rock formations
+  } else {
+    // Default: forest environment
+    addTrees(isForest?60:30);     // More trees if explicitly a forest
+    addRocks(20, 0x3a3a3a, 0.3,1.5); // Dark grey rocks
+  }
+
+  if(isOcean) addWaterPlane(); // Add a semi-transparent water layer
+}
+
+// Places tree trunks + foliage spheres randomly around the scene
+function addTrees(count){
+  for(let i=0;i<count;i++){
+    // Random position within a 120x120 unit area
+    const x=(Math.random()-0.5)*120;
+    const z=(Math.random()-0.5)*120;
+    if(Math.sqrt(x*x+z*z)<6) continue; // Don't place within 6 units of spawn
+
+    const h=3+Math.random()*5; // Random tree height
+
+    // Trunk — a cylinder, narrower at top than bottom
+    const trunk=new THREE.Mesh(
+      new THREE.CylinderGeometry(0.15,0.25,h,6), // (topRadius, bottomRadius, height, sides)
+      new THREE.MeshLambertMaterial({color:0x3d2b1f}) // Dark brown
+    );
+    trunk.position.set(x,h/2,z); // Position so base sits on ground
+    trunk.castShadow=true;
+    scene.add(trunk);
+
+    // Foliage — a sphere of random green color sitting on top of the trunk
+    const fSize=1.5+Math.random()*2;
+    const foliage=new THREE.Mesh(
+      new THREE.SphereGeometry(fSize,6,5), // (radius, widthSegments, heightSegments)
+      new THREE.MeshLambertMaterial({color:new THREE.Color(
+        0.05+Math.random()*0.1,   // R: very low (dark)
+        0.2+Math.random()*0.2,    // G: medium (green)
+        0.05                       // B: very low
+      )})
+    );
+    foliage.position.set(x,h+fSize*0.5,z);
+    foliage.castShadow=true;
+    scene.add(foliage);
+  }
+}
+
+// Places dodecahedron (many-sided) shapes as rocks
+// count=how many, color=rock color, minS/maxS=size range
+function addRocks(count, color, minS, maxS){
+  for(let i=0;i<count;i++){
+    const x=(Math.random()-0.5)*120;
+    const z=(Math.random()-0.5)*120;
+    if(Math.sqrt(x*x+z*z)<4) continue; // Skip if too close to spawn
+
+    const s=minS+Math.random()*maxS; // Random size within range
+    const rock=new THREE.Mesh(
+      new THREE.DodecahedronGeometry(s,0), // 12-sided shape looks rock-like
+      new THREE.MeshLambertMaterial({color})
+    );
+    rock.position.set(x,s*0.4,z); // Partially embed in ground
+    rock.rotation.set(Math.random(),Math.random(),Math.random()); // Random rotation
+    rock.castShadow=true;
+    scene.add(rock);
+  }
+}
+
+// Places tall narrow cylinders as desert mesa/spire formations
+function addTallRocks(count){
+  for(let i=0;i<count;i++){
+    const x=(Math.random()-0.5)*100;
+    const z=(Math.random()-0.5)*100;
+    if(Math.sqrt(x*x+z*z)<6) continue;
+    const h=3+Math.random()*8; // Tall and narrow
+    const rock=new THREE.Mesh(
+      new THREE.CylinderGeometry(
+        0.3+Math.random()*0.5, // Narrow top
+        0.8+Math.random(),     // Wider base
+        h, 5                   // 5-sided for angular look
+      ),
+      new THREE.MeshLambertMaterial({color:0x6b5c4a}) // Sandy brown
+    );
+    rock.position.set(x,h/2,z);
+    rock.rotation.y=Math.random()*Math.PI;
+    rock.castShadow=true;
+    scene.add(rock);
+  }
+}
+
+// Places box-shaped buildings in a ring around the spawn point
+function addBuildings(){
+  for(let i=0;i<25;i++){
+    // Place buildings in a circle at random distances from center
+    const angle=Math.random()*Math.PI*2; // Random angle around the circle
+    const r=10+Math.random()*50;         // Random distance from center
+    const x=Math.cos(angle)*r;
+    const z=Math.sin(angle)*r;
+
+    // Random building dimensions
+    const w=3+Math.random()*6;   // Width
+    const h=5+Math.random()*20;  // Height (taller = skyscraper)
+    const d=3+Math.random()*6;   // Depth
+
+    const building=new THREE.Mesh(
+      new THREE.BoxGeometry(w,h,d),
+      new THREE.MeshLambertMaterial({color:new THREE.Color(
+        0.1, 0.1+Math.random()*0.05, 0.15 // Dark blue-grey colors
+      )})
+    );
+    building.position.set(x,h/2,z); // Y position = half height (so base is at 0)
+    building.castShadow=true;
+    scene.add(building);
+
+    // Add a warm point light near the top of each building for a "windows lit up" effect
+    const wLight=new THREE.PointLight(0xffcc88,0.3,8); // warm yellow, low intensity, short range
+    wLight.position.set(x,h*0.7,z);
+    scene.add(wLight);
+  }
+}
+
+// Adds a semi-transparent blue plane just below ground level to look like water
+function addWaterPlane(){
+  const water=new THREE.Mesh(
+    new THREE.PlaneGeometry(200,200),
+    new THREE.MeshLambertMaterial({color:0x0d2a3d,transparent:true,opacity:0.7})
+  );
+  water.rotation.x=-Math.PI/2; // Lay flat
+  water.position.y=-0.5;       // Slightly below ground so it peeks through low spots
+  scene.add(water);
+}
+
+// Creates a stone path made of flat boxes leading toward the portal
+function addPath(){
+  for(let i=0;i<20;i++){
+    const seg=new THREE.Mesh(
+      new THREE.BoxGeometry(1.5,0.05,2), // Wide, very thin, short segment
+      new THREE.MeshLambertMaterial({color:0x3a3020}) // Dark stone color
+    );
+    seg.position.set(
+      Math.sin(i*0.15)*2, // Slight left-right curve using sine
+      0.01,               // Just above the ground
+      -(i*2+2)            // Extends forward (negative Z = forward in Three.js)
+    );
+    scene.add(seg);
+  }
+}
+
+// Wraps the Marble thumbnail in a giant sphere so it appears as the sky/background
+function loadPanoramaBackground(url){
+  const loader=new THREE.TextureLoader();
+  loader.crossOrigin='anonymous'; // Required for loading images from external URLs
+  loader.load(url,(tex)=>{
+    const sphere=new THREE.Mesh(
+      new THREE.SphereGeometry(300,32,16), // Huge sphere surrounding the whole scene
+      new THREE.MeshBasicMaterial({
+        map:tex,               // Apply the thumbnail as a texture
+        side:THREE.BackSide    // Render the INSIDE of the sphere (we're inside it)
+      })
+    );
+    scene.add(sphere);
+    scene.background=null;              // Let the sphere handle the background
+    scene.fog=new THREE.FogExp2(0x0a0d14,0.018); // Slightly less fog with sky visible
+  });
+}
+
+// Creates the glowing yellow portal in the distance that leads to the Marble world
+function addMarblePortal(marbleUrl){
+  // Group lets us position/rotate multiple objects together as one unit
+  const portalGroup=new THREE.Group();
+  portalGroup.position.set(0,0,-25); // 25 units in front of spawn
+
+  // Portal ring — a torus (donut shape) in yellow-green
+  const torusGeo=new THREE.TorusGeometry(2,0.15,8,32); // (radius, tube, radialSeg, tubularSeg)
+  const torusMat=new THREE.MeshBasicMaterial({color:0xe8ff47}); // MeshBasicMaterial ignores lighting
+  const torus=new THREE.Mesh(torusGeo,torusMat);
+  portalGroup.add(torus);
+
+  // Dark blue circle filling the center of the portal
+  const portalPlane=new THREE.Mesh(
+    new THREE.CircleGeometry(2,32),
+    new THREE.MeshBasicMaterial({
+      color:0x112233,
+      transparent:true,
+      opacity:0.6,
+      side:THREE.DoubleSide // Visible from both sides
+    })
+  );
+  portalGroup.add(portalPlane);
+
+  // Point light at the portal — makes it glow and illuminate nearby ground
+  const pLight=new THREE.PointLight(0xe8ff47,1.5,15); // yellow-green, bright, 15 unit range
+  portalGroup.add(pLight);
+
+  portalGroup.position.y=2; // Raise so it's at eye level
+  scene.add(portalGroup);
+
+  // Store references globally so the animate() loop can:
+  // 1. Spin the portal every frame
+  // 2. Check if the player is close enough to trigger it
+  window._portal=portalGroup;
+  window._marbleUrl=marbleUrl;
+}
+
+
+// ═══════════════════════════════════════════════════════
+//  CONTROLS SETUP
+//  Keyboard and mouse event listeners
+// ═══════════════════════════════════════════════════════
+function setupControls(){
+  // keydown — set movement flag to true when key is pressed
+  document.addEventListener('keydown',e=>{
+    if(e.code==='KeyW'||e.code==='ArrowUp')    moveF=true;
+    if(e.code==='KeyS'||e.code==='ArrowDown')  moveB=true;
+    if(e.code==='KeyA'||e.code==='ArrowLeft')  moveL=true;
+    if(e.code==='KeyD'||e.code==='ArrowRight') moveR=true;
+    if(e.code==='Escape') exitGame(); // ESC exits the game
+  });
+
+  // keyup — clear movement flag when key is released
+  document.addEventListener('keyup',e=>{
+    if(e.code==='KeyW'||e.code==='ArrowUp')    moveF=false;
+    if(e.code==='KeyS'||e.code==='ArrowDown')  moveB=false;
+    if(e.code==='KeyA'||e.code==='ArrowLeft')  moveL=false;
+    if(e.code==='KeyD'||e.code==='ArrowRight') moveR=false;
+  });
+
+  // mousemove — rotate the camera based on mouse movement
+  // Only works when isLocked=true (pointer lock active)
+  document.addEventListener('mousemove',e=>{
+    if(!isLocked) return;
+    yaw   -= e.movementX*0.002; // Horizontal mouse → left/right rotation
+    pitch -= e.movementY*0.002; // Vertical mouse → up/down rotation
+    // Clamp pitch so you can't look completely up/down (60° limit)
+    pitch=Math.max(-Math.PI/3,Math.min(Math.PI/3,pitch));
+  });
+
+  // pointerlockchange — fires when pointer lock is gained or lost
+  // (e.g., user presses ESC to unlock, or clicks to lock)
+  document.addEventListener('pointerlockchange',()=>{
+    isLocked=!!document.pointerLockElement; // true if locked, false if not
+    if(isLocked) document.getElementById('clickOverlay').classList.add('hide');
+  });
+}
+
+// Asks the browser to lock the mouse to the canvas
+// This hides the cursor and gives us raw mouse movement data
+function lockPointer(){
+  const canvas=document.getElementById('gameCanvas');
+  canvas.requestPointerLock();
+}
+
+
+// ═══════════════════════════════════════════════════════
+//  ANIMATION LOOP
+//  Runs ~60 times per second — moves the player and renders each frame
+// ═══════════════════════════════════════════════════════
+let clock=0; // Tracks total time elapsed in the game (used for animations)
+
+function animate(){
+  // requestAnimationFrame calls animate() again next frame — creates the loop
+  animId=requestAnimationFrame(animate);
+  clock+=0.016; // Approximate seconds per frame at 60fps
+
+  // ── Player movement ──
+  if(isLocked){ // Only move if mouse is locked (player is in control)
+    const speed=0.08; // Units per frame
+    const dir=new THREE.Vector3(); // Direction vector, starts at (0,0,0)
+
+    // Add movement in the correct axis based on which keys are held
+    if(moveF) dir.z-=speed; // Forward = negative Z in Three.js
+    if(moveB) dir.z+=speed;
+    if(moveL) dir.x-=speed;
+    if(moveR) dir.x+=speed;
+
+    // Rotate the movement direction by the camera's yaw
+    // This makes "forward" always mean "the direction you're facing"
+    dir.applyEuler(new THREE.Euler(0,yaw,0));
+
+    camera.position.add(dir); // Move the camera
+
+    // Clamp position so player can't walk off the edge of the world
+    camera.position.x=Math.max(-90,Math.min(90,camera.position.x));
+    camera.position.z=Math.max(-90,Math.min(90,camera.position.z));
+    camera.position.y=1.7; // Lock to eye height (no jumping/falling)
+  }
+
+  // ── Camera rotation ──
+  // YXZ order is important for first-person camera — prevents gimbal lock
+  camera.rotation.order='YXZ';
+  camera.rotation.y=yaw;   // Left/right look
+  camera.rotation.x=pitch; // Up/down look
+
+  // ── Update compass ──
+  document.getElementById('compassDir').textContent=getCompassDir(yaw);
+
+  // ── Animate portal and check proximity ──
+  if(window._portal){
+    window._portal.rotation.y=clock*0.5;        // Spin the whole portal group
+    window._portal.children[0].rotation.z=clock*0.3; // Spin the torus ring separately
+
+    // Check distance between camera and portal center
+    const d=camera.position.distanceTo(window._portal.position);
+    if(d<3 && isLocked){
+      // Player walked into the portal — open Marble world in a new tab!
+      window.open(window._marbleUrl,'_blank');
+      window._portal=null; // Set to null so this only triggers once
+    }
+  }
+
+  // Draw the scene from the camera's point of view
+  renderer.render(scene,camera);
+}
+
+// Called when the browser window is resized
+// Updates the camera aspect ratio and renderer size to match
+function onResize(){
+  camera.aspect=window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix(); // Must call this after changing camera properties
+  renderer.setSize(window.innerWidth,window.innerHeight);
+}
+
+
+// ═══════════════════════════════════════════════════════
+//  EXIT GAME
+//  Cleans everything up and returns to the setup screen
+// ═══════════════════════════════════════════════════════
+function exitGame(){
+  cancelAnimationFrame(animId);  // Stop the animation loop
+  clearInterval(pollTimer);       // Stop the API polling if still running
+  if(document.pointerLockElement) document.exitPointerLock(); // Release mouse
+  if(renderer){ renderer.dispose(); } // Free GPU memory used by Three.js
+
+  // Hide game elements
+  document.getElementById('gameCanvas').classList.remove('show');
+  document.getElementById('hud').classList.remove('show');
+  document.getElementById('loading').classList.remove('show');
+
+  // Show setup screen again
+  document.getElementById('setup').style.display='flex';
+  document.getElementById('startBtn').disabled=false;
+
+  // Reset all state back to defaults
+  moveF=moveB=moveL=moveR=false;
+  yaw=0; pitch=0; isLocked=false;
+  document.getElementById('clickOverlay').classList.remove('hide');
+}
+</script>
+</body>
+</html>
